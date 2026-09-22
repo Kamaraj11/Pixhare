@@ -80,16 +80,28 @@ def create_app(config_class: type = Config) -> Flask:
     from api.event_routes import event_bp
     app.register_blueprint(event_bp)
 
-    # Future phases will add:
-    #   from api.photo_routes  import photo_bp
-    #   from api.guest_routes  import guest_bp
-    #   from api.chat_routes   import chat_bp
-    #   from api.voice_routes  import voice_bp
-    #   from api.email_routes  import email_bp
+    from api.photo_routes import photo_bp
+    app.register_blueprint(photo_bp)
+
+    from api.guest_routes import guest_bp
+    app.register_blueprint(guest_bp)
+
+    from api.chat_routes import chat_bp
+    app.register_blueprint(chat_bp)
+
+    from api.voice_routes import voice_bp
+    app.register_blueprint(voice_bp)
+
+    from api.email_routes import email_bp
+    app.register_blueprint(email_bp)
+
     log.info("Blueprints registered.")
 
     # ── Error handlers ────────────────────────────────────────────────
     _register_error_handlers(app)
+
+    # ── Frontend SPA routes ───────────────────────────────────────────
+    _register_frontend_routes(app)
 
     # ── Startup validation ────────────────────────────────────────────
     config_class.validate_startup()
@@ -132,6 +144,33 @@ def _register_error_handlers(app: Flask) -> None:
     def internal_error(e):
         log.exception("Internal server error: %s", e)
         return jsonify({"success": False, "error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}}), 500
+
+
+# ── Frontend SPA route handler ────────────────────────────────────────
+def _register_frontend_routes(app: Flask) -> None:
+    """Serve the SPA index.html for all non-API routes."""
+    from flask import render_template  # noqa: PLC0415
+
+    @app.route("/")
+    def index():
+        return render_template("index.html")
+
+    @app.route("/scan/<path:scan_token>")
+    def scan_page(scan_token):
+        """Guest QR scan page — served as SPA, JS handles the token."""
+        return render_template("index.html")
+
+    @app.route("/gallery/<path:gallery_token>")
+    def gallery_page(gallery_token):
+        """Guest gallery page — served as SPA, JS handles the token."""
+        return render_template("index.html")
+
+    @app.route("/dashboard")
+    @app.route("/login")
+    @app.route("/register")
+    def frontend_pages():
+        """Catch-all for SPA page routes."""
+        return render_template("index.html")
 
 
 # ── Entry point ───────────────────────────────────────────────────────
