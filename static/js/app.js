@@ -108,10 +108,18 @@ function navigate(hash) {
 }
 
 function router() {
+  // ── Path-based guest routes (/scan/ and /gallery/) ────────
+  const path = window.location.pathname;
+  const scanMatch    = path.match(/^\/scan\/([^/?]+)/);
+  const galleryMatch = path.match(/^\/gallery\/([^/?]+)/);
+
+  if (scanMatch)    { renderScanPage(scanMatch[1]);       return; }
+  if (galleryMatch) { renderGalleryPage(galleryMatch[1]); return; }
+
+  // ── Hash-based photographer routes ────────────────────────
   const hash = window.location.hash.replace('#', '') || 'home';
   const render = pages[hash] || pages['404'] || (() => '<p>Page not found.</p>');
 
-  // Guard dashboard pages
   if (['dashboard', 'events', 'upload', 'guests', 'settings'].includes(hash) && !isLoggedIn()) {
     navigate('login');
     return;
@@ -128,6 +136,385 @@ function router() {
 
 window.addEventListener('hashchange', router);
 window.addEventListener('DOMContentLoaded', router);
+
+// ═══════════════════════════════════════════════════════════
+// GUEST SCAN PAGE  /scan/<token>
+// ═══════════════════════════════════════════════════════════
+async function renderScanPage(scanToken) {
+  const root = document.getElementById('app');
+  root.innerHTML = `
+  <div class="bg-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
+  ${guestNavbar()}
+  <div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding-top:68px;">
+    <div class="spinner" style="width:40px;height:40px;border-width:3px;"></div>
+  </div>`;
+
+  const qs = new URLSearchParams(window.location.search);
+  const eventParam = qs.get('event') || '';
+  const qsStr = eventParam ? '?event=' + encodeURIComponent(eventParam) : '';
+  const { ok, data } = await apiFetch(`/api/scan/${scanToken}${qsStr}`);
+
+  if (!ok) {
+    root.innerHTML = `${guestNavbar()}<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding-top:68px;"><div class="slide-up"><div style="font-size:4rem;margin-bottom:var(--space-4);">❌</div><h2>Invalid QR Code</h2><p class="mt-2">Please ask the photographer for a new QR code.</p></div></div>`;
+    return;
+  }
+
+  const { photographer, events } = data;
+  const event = events[0] || {};
+  let mediaStream = null;
+  let capturedBlob = null;
+
+  root.innerHTML = `
+  <div class="bg-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
+  ${guestNavbar()}
+  <div style="min-height:100vh;padding:calc(68px + var(--space-7)) var(--space-5) var(--space-8);position:relative;z-index:1;">
+    <div style="max-width:900px;margin:0 auto;" class="slide-up">
+      <div class="text-center" style="margin-bottom:var(--space-7);">
+        <span class="badge badge-primary" style="margin-bottom:var(--space-3);">${photographer.studio_name}</span>
+        <h1 style="font-size:clamp(1.8rem,4vw,2.8rem);">${event.name || 'Event Registration'}</h1>
+        <div style="display:flex;gap:var(--space-3);justify-content:center;flex-wrap:wrap;margin-top:var(--space-3);">
+          ${event.date ? `<span class="badge badge-primary">📅 ${event.date}</span>` : ''}
+          ${event.venue ? `<span class="badge badge-primary">📍 ${event.venue}</span>` : ''}
+          ${event.event_time ? `<span class="badge badge-primary">🕐 ${event.event_time}</span>` : ''}
+        </div>
+        ${event.description ? `<p style="margin-top:var(--space-4);max-width:560px;margin-left:auto;margin-right:auto;">${event.description}</p>` : ''}
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);align-items:start;" id="scan-grid">
+
+        <!-- Registration Form -->
+        <div class="card">
+          <h3 style="margin-bottom:var(--space-5);">👋 Register to Get Your Photos</h3>
+          <form id="guest-reg-form" style="display:flex;flex-direction:column;gap:var(--space-4);">
+            <div class="form-group">
+              <label class="form-label">Your Name</label>
+              <input id="g-name" type="text" class="form-input" placeholder="Full name" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Email Address</label>
+              <input id="g-email" type="email" class="form-input" placeholder="you@email.com" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Event</label>
+              <select id="g-event" class="form-input">
+                ${events.map(e => `<option value="${e.name}" ${e.name === eventParam ? 'selected' : ''}>${e.name}</option>`).join('')}
+              </select>
+            </div>
+            <div id="selfie-status" style="display:flex;align-items:center;gap:var(--space-3);padding:var(--space-3);background:var(--clr-surface);border-radius:var(--radius-md);border:1.5px dashed var(--clr-border);">
+              <span style="font-size:1.5rem;">🤳</span>
+              <div>
+                <div style="font-size:0.85rem;font-weight:600;" id="selfie-status-text">No selfie yet</div>
+                <div style="font-size:0.75rem;color:var(--clr-text-3);">Use the camera on the right →</div>
+              </div>
+            </div>
+            <button id="guest-submit-btn" type="submit" class="btn btn-primary btn-full btn-lg" disabled>Find My Photos →</button>
+          </form>
+        </div>
+
+        <!-- Camera -->
+        <div>
+          <div class="camera-wrapper" id="camera-wrapper" style="aspect-ratio:1;max-width:340px;margin:0 auto;">
+            <video id="cam-video" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+            <div class="camera-overlay"></div>
+            <div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;">
+              <div style="width:55%;height:55%;border-radius:50%;border:2px dashed rgba(139,92,246,0.5);"></div>
+            </div>
+            <img id="selfie-preview" style="position:absolute;inset:0;width:100%;height:100%;object-fit:cover;display:none;transform:scaleX(-1);">
+          </div>
+          <div style="display:flex;gap:var(--space-3);margin-top:var(--space-4);">
+            <button class="btn btn-primary w-full" id="capture-btn">📸 Capture</button>
+            <button class="btn btn-secondary" id="retake-btn" style="display:none;">↩ Retake</button>
+          </div>
+          <input type="file" id="selfie-upload" accept="image/*" capture="user" style="display:none;">
+          <button class="btn btn-ghost btn-sm w-full" style="margin-top:var(--space-2);" onclick="document.getElementById('selfie-upload').click()">📁 Upload Photo Instead</button>
+        </div>
+      </div>
+
+      <!-- Result (hidden) -->
+      <div id="reg-result" class="hidden" style="margin-top:var(--space-7);text-align:center;">
+        <div class="card" style="max-width:520px;margin:0 auto;padding:var(--space-7);">
+          <div style="font-size:4rem;margin-bottom:var(--space-4);">🎉</div>
+          <h2 id="result-title"></h2>
+          <p class="mt-2" id="result-message"></p>
+          <div id="result-actions" style="margin-top:var(--space-5);display:flex;gap:var(--space-3);justify-content:center;flex-wrap:wrap;"></div>
+        </div>
+      </div>
+    </div>
+  </div>`;
+
+  if (window.innerWidth < 768) document.getElementById('scan-grid').style.gridTemplateColumns = '1fr';
+
+  // Start camera
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false });
+    document.getElementById('cam-video').srcObject = mediaStream;
+  } catch {
+    document.getElementById('camera-wrapper').innerHTML = `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--clr-text-3);gap:var(--space-3);padding:var(--space-5);"><span style="font-size:3rem;">📷</span><p style="font-size:0.85rem;text-align:center;">Camera unavailable. Please upload a selfie below.</p></div>`;
+  }
+
+  function markSelfieReady(blob, label) {
+    capturedBlob = blob;
+    document.getElementById('selfie-status-text').textContent = label;
+    document.getElementById('selfie-status').style.borderColor = 'var(--clr-success)';
+    document.getElementById('guest-submit-btn').disabled = false;
+  }
+
+  document.getElementById('capture-btn')?.addEventListener('click', () => {
+    const video = document.getElementById('cam-video');
+    if (!video.srcObject) { toast('Please upload a selfie photo.', 'error'); return; }
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth || 640; canvas.height = video.videoHeight || 480;
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    canvas.toBlob(blob => {
+      const preview = document.getElementById('selfie-preview');
+      preview.src = URL.createObjectURL(blob);
+      preview.style.display = 'block';
+      document.getElementById('cam-video').style.display = 'none';
+      document.getElementById('capture-btn').style.display = 'none';
+      document.getElementById('retake-btn').style.display = 'inline-flex';
+      markSelfieReady(blob, '✅ Selfie captured!');
+    }, 'image/jpeg', 0.92);
+  });
+
+  document.getElementById('retake-btn')?.addEventListener('click', () => {
+    capturedBlob = null;
+    document.getElementById('selfie-preview').style.display = 'none';
+    document.getElementById('cam-video').style.display = 'block';
+    document.getElementById('capture-btn').style.display = 'inline-flex';
+    document.getElementById('retake-btn').style.display = 'none';
+    document.getElementById('selfie-status-text').textContent = 'No selfie yet';
+    document.getElementById('selfie-status').style.borderColor = 'var(--clr-border)';
+    document.getElementById('guest-submit-btn').disabled = true;
+  });
+
+  document.getElementById('selfie-upload')?.addEventListener('change', e => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const preview = document.getElementById('selfie-preview');
+    preview.src = URL.createObjectURL(file);
+    preview.style.display = 'block';
+    document.getElementById('cam-video').style.display = 'none';
+    markSelfieReady(file, '✅ Photo uploaded!');
+  });
+
+  document.getElementById('guest-reg-form')?.addEventListener('submit', async e => {
+    e.preventDefault();
+    if (!capturedBlob) { toast('Please take or upload a selfie.', 'error'); return; }
+    const btn = document.getElementById('guest-submit-btn');
+    setLoading(btn, true);
+    const form = new FormData();
+    form.append('name',       document.getElementById('g-name').value);
+    form.append('email',      document.getElementById('g-email').value);
+    form.append('event_name', document.getElementById('g-event').value);
+    form.append('selfie',     capturedBlob, 'selfie.jpg');
+    const { ok, data } = await apiUpload(`/api/scan/${scanToken}/register`, form);
+    setLoading(btn, false);
+    mediaStream?.getTracks().forEach(t => t.stop());
+    if (ok) {
+      document.getElementById('scan-grid').classList.add('hidden');
+      const res = document.getElementById('reg-result');
+      res.classList.remove('hidden');
+      document.getElementById('result-title').textContent = data.matched_count > 0 ? `Found ${data.matched_count} photo(s) of you!` : "You're registered!";
+      document.getElementById('result-message').textContent = data.message;
+      document.getElementById('result-actions').innerHTML = `
+        <a href="${data.gallery_url}" class="btn btn-primary btn-lg">View My Gallery →</a>
+        <button class="btn btn-secondary" onclick="window.location.reload()">Register Another</button>`;
+    } else {
+      const err = data.error;
+      if (err?.details) Object.values(err.details).forEach(m => toast(m, 'error'));
+      else toast(err?.message || 'Registration failed.', 'error');
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// GUEST GALLERY PAGE  /gallery/<token>  — Photos + Chat + Voice
+// ═══════════════════════════════════════════════════════════
+async function renderGalleryPage(galleryToken) {
+  const root = document.getElementById('app');
+  root.innerHTML = `${guestNavbar()}<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding-top:68px;"><div class="spinner" style="width:40px;height:40px;border-width:3px;"></div></div>`;
+
+  const { ok, data } = await apiFetch(`/api/gallery/${galleryToken}`);
+  if (!ok) {
+    root.innerHTML = `${guestNavbar()}<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;text-align:center;padding-top:68px;"><div class="slide-up"><div style="font-size:4rem;">🔍</div><h2 class="mt-3">Gallery Not Found</h2><p class="mt-2">This gallery link is invalid.</p></div></div>`;
+    return;
+  }
+
+  const { guest, photos, total } = data;
+  const guestName = guest.name;
+  const eventName = guest.event_name;
+
+  root.innerHTML = `
+  <div class="bg-orbs"><div class="orb orb-1"></div><div class="orb orb-2"></div><div class="orb orb-3"></div></div>
+  ${guestNavbar()}
+  <div style="min-height:100vh;padding:calc(68px + var(--space-6)) var(--space-5) var(--space-8);position:relative;z-index:1;">
+    <div style="max-width:1100px;margin:0 auto;" class="slide-up">
+
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:var(--space-4);margin-bottom:var(--space-6);">
+        <div>
+          <span class="badge badge-primary" style="margin-bottom:var(--space-2);">📸 ${eventName}</span>
+          <h1 style="font-size:clamp(1.6rem,3vw,2.4rem);">${guestName}'s Gallery</h1>
+          <p class="mt-1">${total > 0 ? `We found <strong style="color:var(--clr-primary);">${total} photo${total > 1 ? 's' : ''}</strong> featuring you!` : 'No photos found yet — check back later!'}</p>
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 380px;gap:var(--space-6);align-items:start;" id="gallery-layout">
+
+        <!-- Photos -->
+        <div>
+          <div class="photo-grid" id="gallery-photos">
+            ${total === 0
+              ? `<div class="card" style="grid-column:1/-1;text-align:center;padding:var(--space-7);"><div style="font-size:3rem;margin-bottom:var(--space-3);">⏳</div><h3>Photos coming soon!</h3><p class="mt-2">You'll receive an email when new photos are matched to you.</p></div>`
+              : photos.map(p => `<div class="photo-item" onclick="openLightbox('${p.url}')"><img src="${p.url}" alt="Your photo" loading="lazy"><div class="photo-overlay"><a href="${p.url}" download class="btn btn-sm" style="background:rgba(0,0,0,0.7);color:#fff;border-radius:8px;" onclick="event.stopPropagation()">⬇</a></div></div>`).join('')
+            }
+          </div>
+        </div>
+
+        <!-- Chat + Voice -->
+        <div style="position:sticky;top:calc(68px + var(--space-4));">
+          <div class="chat-container" style="height:calc(100vh - 160px);min-height:520px;">
+
+            <!-- Chat header -->
+            <div style="padding:var(--space-4) var(--space-5);border-bottom:1px solid var(--clr-border);display:flex;align-items:center;gap:var(--space-3);">
+              <div style="width:38px;height:38px;background:var(--grad-primary);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1.1rem;flex-shrink:0;">🤖</div>
+              <div>
+                <div style="font-weight:700;font-size:0.95rem;">Pixhare AI</div>
+                <div style="font-size:0.75rem;color:var(--clr-success);display:flex;align-items:center;gap:4px;"><span class="pulse-dot success"></span> Online</div>
+              </div>
+            </div>
+
+            <!-- Messages -->
+            <div class="chat-messages" id="chat-messages">
+              <div class="chat-message assistant">
+                <div class="chat-avatar">🤖</div>
+                <div class="chat-bubble">Hi <strong>${guestName}</strong>! 👋<br><br>I'm Pixhare AI. You have <strong>${total} photo(s)</strong> from <strong>${eventName}</strong>.<br><br>Ask me anything, or tap 🎤 to speak your question!</div>
+              </div>
+            </div>
+
+            <!-- Voice recording bar -->
+            <div id="voice-indicator" class="hidden" style="padding:var(--space-3) var(--space-4);background:rgba(139,92,246,0.12);border-top:1px solid var(--clr-border-2);display:flex;align-items:center;gap:var(--space-3);">
+              <span class="pulse-dot processing"></span>
+              <span style="font-size:0.85rem;color:var(--clr-primary);flex:1;">Recording…</span>
+              <button id="stop-voice-btn" class="btn btn-sm btn-outline">🛑 Stop</button>
+            </div>
+
+            <!-- Input area -->
+            <div class="chat-input-area">
+              <textarea id="chat-input" class="chat-input" placeholder="Ask about your photos…" rows="1" maxlength="500"></textarea>
+              <button id="voice-btn" class="btn btn-secondary" title="Voice input" style="width:44px;height:44px;padding:0;border-radius:50%;flex-shrink:0;font-size:1.1rem;">🎤</button>
+              <button id="send-chat-btn" class="btn btn-primary" style="width:44px;height:44px;padding:0;border-radius:50%;flex-shrink:0;font-size:1rem;">➤</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.93);z-index:9000;align-items:center;justify-content:center;cursor:pointer;" onclick="document.getElementById('lightbox').style.display='none'">
+    <img id="lightbox-img" style="max-width:90vw;max-height:90vh;object-fit:contain;border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);">
+    <button style="position:absolute;top:var(--space-5);right:var(--space-5);width:44px;height:44px;background:rgba(255,255,255,0.12);border-radius:50%;color:#fff;font-size:1.2rem;display:flex;align-items:center;justify-content:center;border:none;cursor:pointer;">✕</button>
+  </div>`;
+
+  if (window.innerWidth < 900) document.getElementById('gallery-layout').style.gridTemplateColumns = '1fr';
+
+  window.openLightbox = (url) => {
+    document.getElementById('lightbox-img').src = url;
+    document.getElementById('lightbox').style.display = 'flex';
+  };
+
+  // Chat helpers
+  const chatMessages = document.getElementById('chat-messages');
+  const chatInput = document.getElementById('chat-input');
+
+  const appendMsg = (role, html) => {
+    const isUser = role === 'user';
+    const d = document.createElement('div');
+    d.className = `chat-message ${role}`;
+    d.innerHTML = `
+      ${!isUser ? '<div class="chat-avatar">🤖</div>' : ''}
+      <div class="chat-bubble">${html}</div>
+      ${isUser ? `<div class="chat-avatar" style="background:var(--clr-accent);">${guestName[0].toUpperCase()}</div>` : ''}`;
+    chatMessages.appendChild(d);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+    return d;
+  };
+
+  const showTyping = () => {
+    const d = appendMsg('assistant', '<div style="display:flex;gap:6px;align-items:center;"><span class="pulse-dot processing"></span><span class="pulse-dot processing" style="animation-delay:.2s"></span><span class="pulse-dot processing" style="animation-delay:.4s"></span></div>');
+    d.id = 'typing-msg';
+  };
+
+  const sendChat = async (q) => {
+    if (!q.trim()) return;
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
+    appendMsg('user', q);
+    showTyping();
+    document.getElementById('send-chat-btn').disabled = true;
+    const { ok, data } = await apiFetch('/api/chat', { method: 'POST', body: JSON.stringify({ event_name: eventName, guest_name: guestName, question: q }) });
+    document.getElementById('typing-msg')?.remove();
+    document.getElementById('send-chat-btn').disabled = false;
+    appendMsg('assistant', ok ? data.answer.replace(/\n/g, '<br>') : 'Sorry, I couldn\'t process that. Please try again. 😕');
+  };
+
+  chatInput.addEventListener('input', () => { chatInput.style.height = 'auto'; chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px'; });
+  chatInput.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(chatInput.value); } });
+  document.getElementById('send-chat-btn')?.addEventListener('click', () => sendChat(chatInput.value));
+
+  // Voice recording
+  let mediaRec = null, audioChunks = [];
+
+  document.getElementById('voice-btn')?.addEventListener('click', async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunks = [];
+      mediaRec = new MediaRecorder(stream, { mimeType: MediaRecorder.isTypeSupported('audio/webm') ? 'audio/webm' : 'audio/ogg' });
+      mediaRec.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+      mediaRec.onstop = async () => {
+        stream.getTracks().forEach(t => t.stop());
+        document.getElementById('voice-indicator').classList.add('hidden');
+        document.getElementById('voice-btn').textContent = '🎤';
+        document.getElementById('voice-btn').disabled = false;
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        if (blob.size < 1000) { toast('Recording too short, try again.', 'error'); return; }
+        const waitMsg = appendMsg('assistant', '🎙️ Transcribing your voice…');
+        document.getElementById('send-chat-btn').disabled = true;
+        const fd = new FormData();
+        fd.append('audio', blob, 'voice.webm');
+        const { ok, data } = await apiUpload('/api/voice/transcribe', fd);
+        waitMsg.remove();
+        document.getElementById('send-chat-btn').disabled = false;
+        if (ok && data.text) { toast(`Heard: "${data.text}"`, 'info', 3000); await sendChat(data.text); }
+        else toast(data.error?.message || 'Could not transcribe. Please try again.', 'error');
+      };
+      mediaRec.start();
+      document.getElementById('voice-indicator').classList.remove('hidden');
+      document.getElementById('voice-btn').textContent = '🔴';
+      document.getElementById('voice-btn').disabled = true;
+    } catch { toast('Microphone access denied. Please allow microphone in browser settings.', 'error'); }
+  });
+
+  document.getElementById('stop-voice-btn')?.addEventListener('click', () => {
+    if (mediaRec?.state === 'recording') mediaRec.stop();
+  });
+}
+
+// ────────────────────────────────────────────────────────────
+// Guest navbar (no auth)
+// ────────────────────────────────────────────────────────────
+function guestNavbar() {
+  return `
+  <nav class="navbar">
+    <a href="/" class="navbar-brand">
+      <div class="logo-icon">📸</div>
+      <span>Pixhare</span>
+    </a>
+    <div class="navbar-links">
+      <span style="font-size:0.85rem;color:var(--clr-text-3);">Your personal photo gallery</span>
+    </div>
+  </nav>`;
+}
 
 // ────────────────────────────────────────────────────────────
 // Register Page
