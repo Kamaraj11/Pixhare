@@ -77,8 +77,10 @@ def create_app(config_class: type = Config) -> Flask:
     from api.auth_routes import auth_bp
     app.register_blueprint(auth_bp)
 
+    from api.event_routes import event_bp
+    app.register_blueprint(event_bp)
+
     # Future phases will add:
-    #   from api.event_routes  import event_bp
     #   from api.photo_routes  import photo_bp
     #   from api.guest_routes  import guest_bp
     #   from api.chat_routes   import chat_bp

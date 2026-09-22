@@ -38,7 +38,7 @@ def generate_jwt(photographer_id: int) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": photographer_id,
-        "iat": now,
+        "iat": now,DDFDFD
         "exp": now + timedelta(hours=_TOKEN_LIFETIME_HOURS),
     }
     secret = current_app.config["SECRET_KEY"]
