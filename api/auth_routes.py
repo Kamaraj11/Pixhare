@@ -2,10 +2,12 @@
 api/auth_routes.py — Photographer authentication endpoints.
 
 Endpoints:
-    POST /api/auth/register      — Create account, send OTP
-    POST /api/auth/verify-otp    — Verify OTP → issue JWT
-    POST /api/auth/login         — Login → issue JWT
-    GET  /api/auth/me            — Return current photographer (JWT required)
+    POST  /api/auth/register      — Create account, send OTP
+    POST  /api/auth/verify-otp    — Verify OTP → issue JWT
+    POST  /api/auth/login         — Login → issue JWT
+    POST  /api/auth/resend-otp    — Resend OTP to unverified account
+    GET   /api/auth/me            — Return current photographer (JWT required)
+    PATCH /api/auth/profile       — Update name / studio_name / password (JWT required)
 """
 
 from datetime import datetime, timedelta, timezone
