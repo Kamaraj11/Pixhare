@@ -259,6 +259,49 @@ def me():
 
 
 # ─────────────────────────────────────────────────────────────
+# PATCH /api/auth/profile
+# ─────────────────────────────────────────────────────────────
+@auth_bp.route("/profile", methods=["PATCH"])
+@jwt_required
+def update_profile():
+    """
+    Update photographer profile (name, studio_name, password).
+
+    Headers:
+        Authorization: Bearer <token>
+    Body (JSON):
+        { name?, studio_name?, new_password? }
+
+    Response 200:
+        { success: true, message: "...", photographer: {...} }
+    """
+    photographer = Photographer.query.get(g.photographer_id)
+    if not photographer:
+        return jsonify({"success": False, "error": {"code": "NOT_FOUND", "message": "Photographer not found."}}), 404
+
+    data = request.get_json() or {}
+    name = (data.get("name") or "").strip()
+    studio_name = (data.get("studio_name") or "").strip()
+    new_password = data.get("new_password") or ""
+
+    if name:
+        photographer.name = name
+    if studio_name:
+        photographer.studio_name = studio_name
+    if new_password:
+        if len(new_password) < 8:
+            return jsonify({"success": False, "error": {"code": "WEAK_PASSWORD", "message": "Password must be at least 8 characters long."}}), 400
+        photographer.set_password(new_password)
+
+    db.session.commit()
+    return jsonify({
+        "success": True,
+        "message": "Profile updated successfully.",
+        "photographer": _serialize(photographer, full=True)
+    }), 200
+
+
+# ─────────────────────────────────────────────────────────────
 # Serialiser
 # ─────────────────────────────────────────────────────────────
 def _serialize(p: Photographer, full: bool = False) -> dict:

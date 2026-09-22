@@ -39,7 +39,13 @@ class Event(db.Model):
         nullable=False,
     )
 
-    photos = db.relationship("EventPhoto", backref="event", lazy="dynamic")
+    photos = db.relationship(
+        "EventPhoto",
+        primaryjoin="Event.name == EventPhoto.event_name",
+        foreign_keys="[EventPhoto.event_name]",
+        backref="event",
+        lazy="dynamic",
+    )
 
     def __repr__(self) -> str:
         return f"<Event id={self.id} name={self.name!r}>"
