@@ -37,7 +37,7 @@ def generate_jwt(photographer_id: int) -> str:
     """
     now = datetime.now(timezone.utc)
     payload = {
-        "sub": photographer_id,
+        "sub": str(photographer_id),
         "iat": now,
         "exp": now + timedelta(hours=_TOKEN_LIFETIME_HOURS),
     }
@@ -62,7 +62,13 @@ def decode_jwt(token: str) -> dict:
         jwt.InvalidTokenError: Token is invalid.
     """
     secret = current_app.config["SECRET_KEY"]
-    return jwt.decode(token, secret, algorithms=[_ALGORITHM])
+    payload = jwt.decode(token, secret, algorithms=[_ALGORITHM], options={"verify_sub": False})
+    if "sub" in payload:
+        try:
+            payload["sub"] = int(payload["sub"])
+        except (ValueError, TypeError):
+            pass
+    return payload
 
 
 # ─────────────────────────────────────────────────────────────
